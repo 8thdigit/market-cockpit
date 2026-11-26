@@ -90,3 +90,24 @@ def rationale(comp_row: pd.Series, ind_row: pd.Series, patterns: list[str]) -> l
         if info and info[0] == "bear":
             out.append(f"Warning candle: {p.replace('_', ' ')}")
     return out
+
+
+def rationale_short(row: pd.Series, patterns: list[str]) -> list[str]:
+    """Reasons for a short setup, phrased on the original (not mirrored) price."""
+    out = []
+    if row["close"] < row["ema20"] and row["ema50"] < row["ema200"]:
+        out.append("Price below 20/50-EMA with 50 below 200 (downtrend)")
+    if 45 <= row["rsi"] <= 60:
+        out.append(f"RSI {row['rsi']:.0f}: relief bounce stalling under resistance")
+    if row["bb_pctile"] < 0.35:
+        out.append(f"Tight range (Bollinger width at {row['bb_pctile'] * 100:.0f}th percentile) before a likely break")
+    if row["adx"] > 20:
+        out.append(f"Trend strength ADX {row['adx']:.0f}")
+    if row["vol_ratio"] > 1.3 and row["ret1"] < 0:
+        out.append(f"Selling on {row['vol_ratio']:.1f}x average volume")
+    for p in patterns:
+        info = PATTERN_INFO.get(p)
+        if info and info[0] == "bear":
+            rate = f" (~{info[1]}% historical reversal rate)" if info[1] else ""
+            out.append(f"Candle: {p.replace('_', ' ')}{rate}")
+    return out

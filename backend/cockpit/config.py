@@ -37,6 +37,8 @@ class Settings:
     provider: str = field(default_factory=lambda: _env("COCKPIT_PROVIDER", "yahoo"))
     fred_api_key: str = field(default_factory=lambda: _env("FRED_API_KEY", ""))
     history_days: int = field(default_factory=lambda: int(_env("COCKPIT_HISTORY_DAYS", "750")))
+    # indices, commodities, FX and rates get a long history for the analog/history engines
+    macro_years: int = field(default_factory=lambda: int(_env("COCKPIT_MACRO_YEARS", "15")))
     news_enabled: bool = field(default_factory=lambda: _env("COCKPIT_NEWS", "1") == "1")
     cors_origins: str = field(default_factory=lambda: _env("COCKPIT_CORS", "*"))
     # Trading rules
@@ -49,6 +51,10 @@ class Settings:
 
     def universe(self) -> dict:
         return json.loads((self.config_dir / "universe.json").read_text())
+
+    def episodes(self) -> list[dict]:
+        p = self.config_dir / "episodes.json"
+        return json.loads(p.read_text())["episodes"] if p.exists() else []
 
     def events(self) -> list[dict]:
         return json.loads((self.config_dir / "events.json").read_text())["events"]

@@ -61,6 +61,11 @@ export const api = {
     }
     return r
   },
+  async page(name, date) {
+    if (!STATIC) return get(`/api/page/${name}${date ? `?date=${date}` : ''}`)
+    const d = await staticDate(date)
+    return get(`${BASE}data/page/${name}/${d}.json`)
+  },
   async trackRecord(date) {
     return STATIC ? get(`${BASE}data/track-record.json`) : get(`/api/track-record${date ? `?date=${date}` : ''}`)
   },

@@ -46,6 +46,13 @@ CREATE TABLE IF NOT EXISTS calibration (
   market TEXT, bucket TEXT, trades INTEGER, wins INTEGER, hit_rate REAL, avg_r REAL, expected_r REAL, updated TEXT,
   PRIMARY KEY (market, bucket)
 );
+CREATE TABLE IF NOT EXISTS daily_views (
+  date TEXT, kind TEXT, payload TEXT, PRIMARY KEY (date, kind)
+);
+CREATE TABLE IF NOT EXISTS stances (
+  date TEXT, symbol TEXT, stance TEXT, direction INTEGER, payload TEXT,
+  ret_5d REAL, outcome TEXT, checked_on TEXT, PRIMARY KEY (date, symbol)
+);
 CREATE TABLE IF NOT EXISTS runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT, job TEXT, started TEXT, finished TEXT, status TEXT, message TEXT
 );

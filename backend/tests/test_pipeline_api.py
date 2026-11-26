@@ -61,3 +61,26 @@ def test_track_record_and_health(client):
     assert "overall" in t and "calibration" in t
     h = client.get("/api/health").json()
     assert h["freshness"]
+
+
+def test_four_pages(client):
+    i = client.get("/api/page/influencers").json()
+    assert i["influencers"] and i["markets"] and i["expectations"]
+    assert all(m["stance"] in {"BUY", "SELL", "ACCUMULATE DIPS", "SELL RALLIES", "WAIT"} for m in i["markets"])
+    h = client.get("/api/page/history").json()
+    assert h["episodes"] and "analogs" in h
+    st = client.get("/api/page/stocks").json()
+    assert set(st["record"]) == {"all", "IN", "US", "jackpot"}
+    c = client.get("/api/page/commodities").json()
+    assert len(c["stances"]) == 4
+    assert {"met", "failed", "success"} <= set(c["stance_record"]["overall"])
+
+
+def test_short_simulation_mirror():
+    import pandas as pd
+    from cockpit.engines import indicators, trades
+    idx = pd.bdate_range("2026-01-01", periods=2)
+    bars = pd.DataFrame({"open": [100, 99], "high": [101, 99.5], "low": [98, 93], "close": [99, 94], "volume": [1, 1]}, index=idx)
+    # short from 100, stop 103, target 94 -> target hit on day 2 (low 93)
+    res = trades.simulate(indicators.invert(bars), 1 / 100, 1 / 103, 1 / 94, 15)
+    assert res[0] == "target"

@@ -11,12 +11,14 @@ import pandas as pd
 from .config import Settings, get_settings, instruments
 from .db import DB, dec
 from .engines import alerts as A
-from .engines import indicators, patterns, regime, scoring, trades
+from .engines import indicators, influence, patterns, regime, scoring, stance, trades
 from .providers import macro_provider, price_provider
 from .providers.fred import FRED_SERIES
 
 log = logging.getLogger("cockpit.pipeline")
 GOLD_LIKE = {"GC=F", "SI=F", "GLD", "GOLDBEES.NS"}
+STANCE_SYMS = ["GC=F", "SI=F", "BZ=F", "CL=F", "^GSPC", "^NDX", "^NSEI", "^BSESN"]
+SHORTABLE = {"GC=F", "SI=F", "BZ=F", "CL=F"}
 
 
 def now_iso() -> str:
@@ -38,8 +40,9 @@ def collect_prices(db: DB, s: Settings | None = None, provider=None, end: str | 
     ok, failed = 0, []
     for inst in insts:
         sym = inst["symbol"]
-        start = (pd.Timestamp(last[sym]) - timedelta(days=7)).date().isoformat() if sym in last else \
-            (Date.today() - timedelta(days=int(s.history_days * 1.45))).isoformat()
+        first = (Date.today() - timedelta(days=int(s.history_days * 1.45))).isoformat() if inst["kind"] == "equity" \
+            else (Date.today() - timedelta(days=365 * s.macro_years)).isoformat()
+        start = (pd.Timestamp(last[sym]) - timedelta(days=7)).date().isoformat() if sym in last else first
         try:
             df = provider.daily(sym, start, end)
             rows = [{"symbol": sym, "date": d.date().isoformat(), "open": float(r.open), "high": float(r.high),
@@ -61,7 +64,7 @@ def collect_prices(db: DB, s: Settings | None = None, provider=None, end: str | 
 def collect_macro(db: DB, s: Settings | None = None, provider=None) -> dict:
     s = s or get_settings()
     provider = provider or macro_provider(s)
-    start = (Date.today() - timedelta(days=int(s.history_days * 1.45))).isoformat()
+    start = (Date.today() - timedelta(days=365 * s.macro_years)).isoformat()
     ok, failed = 0, []
     for sid in FRED_SERIES:
         try:
@@ -157,7 +160,7 @@ def analyse(db: DB, start: str, end: str, s: Settings | None = None) -> dict:
     reg_pts = reg["label"].map(regime.points_for_scoring)
 
     # --- signals + calibration
-    sig_rows, calib_trades = [], {"IN": [], "US": [], "CMD": []}
+    sig_rows, calib_trades = [], {"IN": [], "US": [], "CMD": [], "CMD-S": []}
     scores: dict[str, pd.Series] = {}
     for sym, (ind, pats) in frames.items():
         inst = meta[sym]
@@ -183,6 +186,20 @@ def analyse(db: DB, start: str, end: str, s: Settings | None = None) -> dict:
                 "adx": float(r["adx"]), "ema20": float(r["ema20"]), "ema50": float(r["ema50"]),
                 "ema200": float(r["ema200"]), "trend": scoring.trend_label(r)})
     db.upsert("signals", sig_rows)
+
+    # short side for commodities: long-setup logic on the mirrored (1/price) series
+    short: dict[str, tuple] = {}
+    for sym in SHORTABLE:
+        if sym not in frames:
+            continue
+        inv = indicators.invert(frames[sym][0][["open", "high", "low", "close", "volume"]])
+        iind, ipats = indicators.compute(inv), patterns.detect(inv)
+        isc = scoring.score(scoring.components(iind, ipats, 5.0))
+        short[sym] = (isc, iind, ipats)
+        calib_trades["CMD-S"] += trades.calibrate(iind, isc, s.reward_risk, s.max_hold_days, s.min_pick_score)
+    # indices get scores for their stance (they are not traded as picks)
+    idx_scores = {sym: scoring.score(scoring.components(*frames[sym], 5.0)) for sym in STANCE_SYMS
+                  if sym in frames and sym not in scores}
     calib = {}
     for mkt, tr in calib_trades.items():
         summ = trades.summarise(tr)
@@ -191,6 +208,10 @@ def analyse(db: DB, start: str, end: str, s: Settings | None = None) -> dict:
                                    "hit_rate": v["hit_rate"], "avg_r": v["avg_r"], "expected_r": v["expected_r"],
                                    "updated": now_iso()}
                                   for b, v in summ.items()])
+
+    # --- influencer / analog context (long history)
+    macro_all = {sid: db.macro_series(sid, end) for sid in ("DFEDTARU", "CPIAUCSL", "DFII10", "sent_geopolitics")}
+    ctx = influence.Context(closes, macro_all)
 
     # --- day-by-day: outcomes, picks, alerts
     days = sorted({r["date"] for r in sig_rows})
@@ -203,7 +224,8 @@ def analyse(db: DB, start: str, end: str, s: Settings | None = None) -> dict:
         ts = pd.Timestamp(d)
         day_alerts = []
         day_alerts += _update_outcomes(db, d, frames, names)
-        day_alerts += _make_picks(db, d, frames, scores, meta, calib, reg, s)
+        day_alerts += _make_picks(db, d, frames, scores, meta, calib, reg, s, short)
+        day_alerts += _views_and_stances(db, d, ctx, frames, scores, idx_scores, short, reg, names, s)
         day_alerts += A.market_alerts(d, {k: v[0] for k, v in frames.items()}, names)
         day_alerts += A.event_alerts(d, events)
         for sym, sc in scores.items():
@@ -225,6 +247,7 @@ def analyse(db: DB, start: str, end: str, s: Settings | None = None) -> dict:
             prev_label = label
         day_alerts += _stale_alerts(d, frames, names)
         db.upsert("alerts", day_alerts)
+    _score_stances(db, closes)
     return {"days": len(days), "signals": len(sig_rows), "calibration": calib}
 
 
@@ -249,7 +272,13 @@ def _update_outcomes(db: DB, d: str, frames, names) -> list[dict]:
             continue
         ind = f[0]
         bars = ind.loc[pd.Timestamp(p["date"]) + timedelta(days=1): pd.Timestamp(d)]
-        res = trades.simulate(bars, p["entry"], p["stop"], p["target"], get_settings().max_hold_days)
+        if p["direction"] == "short":
+            res = trades.simulate(indicators.invert(bars), 1 / p["entry"], 1 / p["stop"], 1 / p["target"],
+                                  get_settings().max_hold_days)
+            if res is not None:
+                res = (res[0], res[1], 1 / res[2] if res[2] else res[2], res[3])
+        else:
+            res = trades.simulate(bars, p["entry"], p["stop"], p["target"], get_settings().max_hold_days)
         if res is None:
             continue
         status, dt, px, r = res
@@ -261,7 +290,7 @@ def _update_outcomes(db: DB, d: str, frames, names) -> list[dict]:
     return out
 
 
-def _make_picks(db: DB, d: str, frames, scores, meta, calib, reg, s: Settings) -> list[dict]:
+def _make_picks(db: DB, d: str, frames, scores, meta, calib, reg, s: Settings, short=None) -> list[dict]:
     ts = pd.Timestamp(d)
     open_syms = {r["symbol"] for r in db.query("SELECT symbol FROM picks WHERE status='open' AND date < ?", (d,))}
     label = reg.loc[ts, "label"] if ts in reg.index else "Neutral"
@@ -289,7 +318,23 @@ def _make_picks(db: DB, d: str, frames, scores, meta, calib, reg, s: Settings) -
             why.append(f"Similar {mkt} setups ({b}) hit target first {cal['hit_rate'] * 100:.0f}% of the time "
                        f"in {cal['trades']} past trades (avg {cal['avg_r']:+.2f}R)")
         cands.append({"symbol": sym, "market": mkt, "score": score, "confidence": conf, "entry": float(row["close"]),
-                      "stop": stop, "target": target, "rationale": why, "expected_r": exp_r})
+                      "stop": stop, "target": target, "rationale": why, "expected_r": exp_r, "direction": "long"})
+    for sym, (isc, iind, ipats) in (short or {}).items():
+        if ts not in isc.index or sym in open_syms or float(isc.loc[ts]) < s.min_pick_score:
+            continue
+        score, irow, row = float(isc.loc[ts]), iind.loc[ts], frames[sym][0].loc[ts]
+        if pd.isna(irow["atr"]) or irow["atr"] <= 0:
+            continue
+        b = trades.bucket(score)
+        cal = calib.get("CMD-S", {}).get(b)
+        istop, itarget = trades.levels(irow["close"], irow["atr"], irow.get("low10"), s.reward_risk)
+        why = scoring.rationale_short(row, [p for p, v in frames[sym][1].loc[ts].items() if v])
+        if cal:
+            why.append(f"Similar commodity short setups ({b}) hit target first {cal['hit_rate'] * 100:.0f}% of the time "
+                       f"in {cal['trades']} past trades (avg {cal['avg_r']:+.2f}R)")
+        cands.append({"symbol": sym, "market": "CMD", "score": score, "confidence": cal["confidence"] if cal else 0.5,
+                      "entry": float(row["close"]), "stop": 1 / istop, "target": 1 / itarget, "rationale": why,
+                      "expected_r": cal["expected_r"] if cal else 0.0, "direction": "short"})
     cands.sort(key=lambda c: c["score"] * (1 + c["expected_r"]), reverse=True)
     cands = cands[:12]
     jackpot_min = s.jackpot_score + (8 if label == "Risk-off" else 0)
@@ -298,18 +343,62 @@ def _make_picks(db: DB, d: str, frames, scores, meta, calib, reg, s: Settings) -
     for rank, c in enumerate(cands, 1):
         is_jp = jp < 3 and c["score"] >= jackpot_min and c["expected_r"] >= s.jackpot_min_edge
         jp += int(is_jp)
-        pid = f"{d}:{c['symbol']}"
-        rows.append({"id": pid, "date": d, "symbol": c["symbol"], "market": c["market"], "direction": "long",
+        pid = f"{d}:{c['symbol']}" + (":S" if c["direction"] == "short" else "")
+        rows.append({"id": pid, "date": d, "symbol": c["symbol"], "market": c["market"], "direction": c["direction"],
                      "entry": c["entry"], "stop": c["stop"], "target": c["target"], "score": c["score"],
                      "confidence": c["confidence"], "expected_r": c["expected_r"], "rank": rank, "jackpot": int(is_jp), "rationale": c["rationale"],
                      "status": "open", "exit_date": None, "exit_price": None, "r_multiple": None})
         name = meta[c["symbol"]]["name"]
         out.append(A.make(d, "watch" if is_jp else "info", "pick",
-                          f"{'JACKPOT ' if is_jp else ''}New pick: {name} (score {c['score']:.0f}, hit-rate {c['confidence'] * 100:.0f}%, edge {c['expected_r']:+.2f}R)",
+                          f"{'JACKPOT ' if is_jp else ''}New {'SHORT ' if c['direction'] == 'short' else ''}pick: {name} (score {c['score']:.0f}, hit-rate {c['confidence'] * 100:.0f}%, edge {c['expected_r']:+.2f}R)",
                           f"Entry {c['entry']:.2f} · stop {c['stop']:.2f} · target {c['target']:.2f}", c["symbol"]))
     existing = {r["id"] for r in db.query("SELECT id FROM picks WHERE date=?", (d,))}
     db.upsert("picks", [r for r in rows if r["id"] not in existing])
     return out
+
+
+def _views_and_stances(db: DB, d: str, ctx, frames, scores, idx_scores, short, reg, names, s: Settings) -> list[dict]:
+    ts = pd.Timestamp(d)
+    infl = influence.influencers(ctx, d)
+    an = influence.analogs(ctx, d)
+    ex = influence.expectations(ctx, d, an.get("forward", {}), names)
+    db.upsert("daily_views", [{"date": d, "kind": "influencers", "payload": infl},
+                              {"date": d, "kind": "analogs", "payload": an},
+                              {"date": d, "kind": "expectations", "payload": ex}])
+    label = reg.loc[ts, "label"] if ts in reg.index else "Neutral"
+    exmap = {e["symbol"]: e for e in ex}
+    rows, out = [], []
+    prev = {r["symbol"]: r["stance"] for r in db.query(
+        "SELECT symbol, stance FROM stances WHERE date=(SELECT MAX(date) FROM stances WHERE date<?)", (d,))}
+    for sym in STANCE_SYMS:
+        if sym not in frames or ts not in frames[sym][0].index:
+            continue
+        row = frames[sym][0].loc[ts]
+        if pd.isna(row["atr"]):
+            continue
+        ls_series = scores.get(sym, idx_scores.get(sym))
+        ls = float(ls_series.loc[ts]) if ls_series is not None and ts in ls_series.index else None
+        ss = float(short[sym][0].loc[ts]) if sym in short and ts in short[sym][0].index else None
+        st = stance.decide(sym, names[sym], row, ls, ss, exmap.get(sym), label, s.min_pick_score, s.reward_risk)
+        rows.append({"date": d, "symbol": sym, "stance": st["stance"], "direction": st["direction"], "payload": st,
+                     "ret_5d": None, "outcome": "pending", "checked_on": None})
+        if prev.get(sym) and prev[sym] != st["stance"]:
+            sev = "warning" if st["stance"] in ("BUY", "SELL") else "watch"
+            out.append(A.make(d, sev, "stance", f"{names[sym]}: {prev[sym]} → {st['stance']}", st["rationale"][0], sym))
+    existing = {(r["date"], r["symbol"]) for r in db.query("SELECT date, symbol FROM stances WHERE date=? AND outcome!='pending'", (d,))}
+    db.upsert("stances", [r for r in rows if (r["date"], r["symbol"]) not in existing])
+    return out
+
+
+def _score_stances(db: DB, closes: dict[str, pd.Series]) -> None:
+    for r in db.query("SELECT date, symbol, direction FROM stances WHERE outcome='pending'"):
+        c = closes.get(r["symbol"])
+        if c is None:
+            continue
+        res = stance.outcome(c, r["date"], r["direction"])
+        if res:
+            db.execute("UPDATE stances SET ret_5d=?, outcome=?, checked_on=? WHERE date=? AND symbol=?",
+                       (res["ret_5d"], res["outcome"], res["checked_on"], r["date"], r["symbol"]))
 
 
 # ----------------------------------------------------------------------------- orchestration

@@ -19,6 +19,8 @@ def export(db: DB, out: str, days: int = 60) -> dict:
     for d in all_dates:
         _w(root / "snapshot" / f"{d}.json", service.snapshot(db, d))
         _w(root / "signals" / f"{d}.json", service.signals(db, d))
+        for page in ("influencers", "history", "stocks", "commodities"):
+            _w(root / "page" / page / f"{d}.json", getattr(service, f"page_{page}")(db, d))
     latest = all_dates[-1] if all_dates else None
     syms = sorted({r["symbol"] for r in db.query("SELECT DISTINCT symbol FROM prices")})
     for sym in syms:

@@ -78,3 +78,14 @@ def compute(df: pd.DataFrame, bench: pd.DataFrame | None = None) -> pd.DataFrame
         out["rs_63"] = out["ret63"]
     out["rs_63"] = out["rs_63"].fillna(0)
     return out
+
+
+def invert(df: pd.DataFrame) -> pd.DataFrame:
+    """Mirror a price series (1/price) so long-setup logic finds short setups."""
+    out = pd.DataFrame(index=df.index)
+    out["open"] = 1 / df["open"]
+    out["high"] = 1 / df["low"]
+    out["low"] = 1 / df["high"]
+    out["close"] = 1 / df["close"]
+    out["volume"] = df["volume"]
+    return out

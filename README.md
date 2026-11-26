@@ -51,6 +51,13 @@ docker compose exec cockpit python -m cockpit backfill --days 250
 
 GitHub's scheduler can delay runs by several minutes; for tighter monitoring run the Docker image on any small VM.
 
+## The four pages
+
+1. **Influencers.** Each driver (Fed rate, CPI, 10-yr and real yields, dollar, Brent, gold, VIX, USD/INR, geopolitics news tone) with its current move, 3-year rank, usual impact on gold, oil, US and India, and *what history says*: how those markets actually moved over the next 10 days when the driver was in the same state. Also a recommendation per market (S&P, Nasdaq, Nifty, Sensex, gold, silver, Brent, WTI) and the expected 5- and 10-day ranges.
+2. **History.** The 15 past days most similar to today across 8 macro factors (15 years of data), what followed after 5/10/20 days, and curated episodes (2013 taper, 2014–16 oil glut, Q4 2018, Covid, 2022 hikes, 2022 oil spike, 2026 Iran war, 2026 gold unwind) with moves computed from stored prices.
+3. **Stocks cockpit.** Jackpot and regular picks for India and the US: why each was picked, entry/stop/target, expected move, hit rate and edge. Also a watchlist, open positions, every past pick with its outcome, and success rates.
+4. **Gold & Oil cockpit.** A daily call per commodity (BUY / SELL / ACCUMULATE DIPS / SELL RALLIES / WAIT) with buy or sell zone, stop, target, 5-day range and reasons. Every call is checked 5 trading days later (met/failed), with success rates per commodity and per call type, plus long and short trade picks and their results.
+
 ## How the engines work
 
 **Setup score (0–100)** for long swing trades, weights matching the checklist:

@@ -55,6 +55,26 @@ def instrument(symbol: str, date: str | None = None, bars: int = Query(260, ge=3
     return res
 
 
+@app.get("/api/page/influencers")
+def page_influencers(date: str | None = None):
+    return service.page_influencers(db, date, settings)
+
+
+@app.get("/api/page/history")
+def page_history(date: str | None = None):
+    return service.page_history(db, date, settings)
+
+
+@app.get("/api/page/stocks")
+def page_stocks(date: str | None = None):
+    return service.page_stocks(db, date, settings)
+
+
+@app.get("/api/page/commodities")
+def page_commodities(date: str | None = None):
+    return service.page_commodities(db, date, settings)
+
+
 @app.get("/api/track-record")
 def track_record(date: str | None = None):
     return service.track_record(db, date)

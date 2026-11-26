@@ -1,21 +1,23 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { api } from './api.js'
 import { SEVERITIES, Tabs } from './ui.jsx'
-import { Overview, Picks, Scanner, Instrument, TrackRecord, Health } from './views.jsx'
+import { Scanner, Instrument, Health } from './views.jsx'
+import { InfluencersPage, HistoryPage, StocksPage, CommoditiesPage } from './pages.jsx'
 
 const TABS = [
-  ['overview', 'Cockpit'],
-  ['picks', 'Jackpot & picks'],
-  ['scanner', 'Scanner'],
+  ['influencers', '1 · Influencers'],
+  ['history', '2 · History'],
+  ['stocks', '3 · Stocks cockpit'],
+  ['commodities', '4 · Gold & Oil cockpit'],
   ['instrument', 'Chart'],
-  ['track', 'Track record'],
+  ['scanner', 'Scanner'],
   ['health', 'Data health'],
 ]
 
 function useHash() {
   const read = () => {
     const p = new URLSearchParams(window.location.hash.slice(1))
-    return { tab: p.get('tab') || 'overview', sym: p.get('sym') || 'GC=F', date: p.get('date') || '', sev: p.get('sev') || '' }
+    return { tab: p.get('tab') || 'influencers', sym: p.get('sym') || 'GC=F', date: p.get('date') || '', sev: p.get('sev') || '' }
   }
   const [st, setSt] = useState(read)
   useEffect(() => {
@@ -106,11 +108,12 @@ export default function App() {
         {snap?.empty && <div className="empty big">No analysed data yet. Run <code>python -m cockpit backfill</code> to build history.</div>}
         {snap && !snap.empty && (
           <>
-            {st.tab === 'overview' && <Overview snap={snap} openSym={openSym} goPicks={() => set({ tab: 'picks' })} />}
-            {st.tab === 'picks' && <Picks snap={snap} openSym={openSym} />}
+            {st.tab === 'influencers' && <InfluencersPage key={`i${tick}`} date={asOf} openSym={openSym} />}
+            {st.tab === 'history' && <HistoryPage key={`h${tick}`} date={asOf} />}
+            {st.tab === 'stocks' && <StocksPage key={`s${tick}`} date={asOf} openSym={openSym} />}
+            {st.tab === 'commodities' && <CommoditiesPage key={`c${tick}`} date={asOf} openSym={openSym} />}
             {st.tab === 'scanner' && <Scanner date={asOf} openSym={openSym} />}
             {st.tab === 'instrument' && <Instrument sym={st.sym} date={asOf} onSym={(sym) => set({ sym })} />}
-            {st.tab === 'track' && <TrackRecord date={asOf} openSym={openSym} />}
             {st.tab === 'health' && <Health />}
           </>
         )}

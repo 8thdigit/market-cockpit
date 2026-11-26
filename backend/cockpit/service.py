@@ -170,3 +170,158 @@ def health(db: DB) -> dict:
     fresh = db.query("SELECT p.symbol, i.name, MAX(p.date) last_date, COUNT(*) bars FROM prices p "
                      "LEFT JOIN instruments i ON i.symbol=p.symbol GROUP BY p.symbol ORDER BY last_date")
     return {"sources": src, "runs": runs, "freshness": fresh, "provider": get_settings().provider}
+
+
+# ============================================================ four-page views
+COMMODITIES = ["GC=F", "SI=F", "BZ=F", "CL=F"]
+INDEX_STANCES = ["^GSPC", "^NDX", "^NSEI", "^BSESN"]
+
+
+def _view(db: DB, d: str, kind: str, default=None):
+    r = db.query("SELECT payload FROM daily_views WHERE date=? AND kind=?", (d, kind))
+    return dec(r[0]["payload"], default) if r else default
+
+
+def _stances(db: DB, d: str, syms: list[str]) -> list[dict]:
+    q = f"SELECT * FROM stances WHERE date=? AND symbol IN ({','.join('?' * len(syms))})"
+    rows = db.query(q, [d, *syms])
+    out = []
+    for r in sorted(rows, key=lambda r: syms.index(r["symbol"])):
+        p = dec(r["payload"], {})
+        p.update({"outcome": r["outcome"], "ret_5d": r["ret_5d"]})
+        out.append(p)
+    return out
+
+
+def _stance_record(db: DB, d: str, syms: list[str], limit: int = 400) -> dict:
+    q = (f"SELECT date, symbol, stance, direction, ret_5d, outcome, checked_on, payload FROM stances "
+         f"WHERE date<=? AND symbol IN ({','.join('?' * len(syms))}) ORDER BY date DESC LIMIT ?")
+    rows = db.query(q, [d, *syms, limit])
+    names = {i["symbol"]: i["name"] for i in instruments()}
+    hist, per = [], {}
+    for r in rows:
+        p = dec(r.pop("payload"), {})
+        r["name"] = names.get(r["symbol"], r["symbol"])
+        r["close"] = p.get("close")
+        r["prob_up_5d"] = p.get("prob_up_5d")
+        hist.append(r)
+    def agg(rs):
+        decided = [x for x in rs if x["outcome"] in ("met", "failed")]
+        met = sum(1 for x in decided if x["outcome"] == "met")
+        return {"calls": len([x for x in rs if x["direction"] != 0]), "decided": len(decided), "met": met,
+                "failed": len(decided) - met, "success": met / len(decided) if decided else None,
+                "pending": sum(1 for x in rs if x["outcome"] == "pending" and x["direction"] != 0),
+                "avg_ret_dir": (sum((x["ret_5d"] or 0) * x["direction"] for x in decided) / len(decided)) if decided else None}
+    for sym in syms:
+        per[sym] = dict(agg([x for x in hist if x["symbol"] == sym]), name=names.get(sym, sym))
+    by_stance = {st: agg([x for x in hist if x["stance"] == st]) for st in ("BUY", "SELL", "ACCUMULATE DIPS", "SELL RALLIES")}
+    return {"overall": agg(hist), "per_symbol": per, "by_stance": by_stance, "history": hist[:200]}
+
+
+def _pick_stats(rows: list[dict]) -> dict:
+    closed = [r for r in rows if r["status"] in ("target", "stopped", "expired")]
+    n = len(closed)
+    met = sum(1 for r in closed if r["status"] == "target")
+    failed = sum(1 for r in closed if r["status"] == "stopped")
+    wins = sum(1 for r in closed if (r["r_multiple"] or 0) > 0)
+    return {"closed": n, "target_hit": met, "stopped": failed, "expired": n - met - failed,
+            "success": wins / n if n else None, "target_rate": met / n if n else None,
+            "avg_r": sum(r["r_multiple"] or 0 for r in closed) / n if n else None,
+            "total_r": sum(r["r_multiple"] or 0 for r in closed), "open": sum(1 for r in rows if r["status"] == "open")}
+
+
+def page_influencers(db: DB, date: str | None, s: Settings | None = None) -> dict:
+    s = s or get_settings()
+    d = resolve_date(db, date)
+    if not d:
+        return {"date": None, "empty": True}
+    snap = snapshot(db, d, None, s)
+    return {
+        "date": d, "provider": s.provider, "regime": snap["regime"], "regime_history": snap["regime_history"],
+        "influencers": _view(db, d, "influencers", []),
+        "expectations": _view(db, d, "expectations", []),
+        "markets": _stances(db, d, INDEX_STANCES + COMMODITIES),
+        "events": snap["events"], "news": snap["news"][:12], "sentiment": snap["sentiment"],
+        "alerts": [a for a in snap["alerts"] if a["severity"] in ("warning", "critical")][:12],
+        "macro": snap["macro"], "tiles": snap["tiles"],
+    }
+
+
+def page_history(db: DB, date: str | None, s: Settings | None = None) -> dict:
+    s = s or get_settings()
+    d = resolve_date(db, date)
+    if not d:
+        return {"date": None, "empty": True}
+    from .engines import influence
+    closes = {}
+    for sym in list(influence.TARGETS) + ["DX-Y.NYB", "^TNX"]:
+        rows = db.query("SELECT date, close FROM prices WHERE symbol=? AND date<=? ORDER BY date", (sym, d))
+        if rows:
+            closes[sym] = pd.Series([r["close"] for r in rows], index=pd.to_datetime([r["date"] for r in rows]))
+    first = min((c.index[0] for c in closes.values()), default=None)
+    return {"date": d, "provider": s.provider, "analogs": _view(db, d, "analogs", {}),
+            "expectations": _view(db, d, "expectations", []),
+            "episodes": influence.episodes(s.episodes(), closes),
+            "history_from": first.date().isoformat() if first is not None else None,
+            "targets": influence.TARGETS}
+
+
+def page_stocks(db: DB, date: str | None, s: Settings | None = None) -> dict:
+    s = s or get_settings()
+    d = resolve_date(db, date)
+    if not d:
+        return {"date": None, "empty": True}
+    names = {i["symbol"]: i["name"] for i in instruments(s)}
+    new = [_pick(p, names) for p in db.query("SELECT * FROM picks WHERE date=? AND market IN ('IN','US') ORDER BY rank", (d,))]
+    openp = [_pick(p, names) for p in db.query(
+        "SELECT * FROM picks WHERE date<? AND market IN ('IN','US') AND (status='open' OR exit_date>?) ORDER BY date DESC", (d, d))]
+    allp = [_pick(p, names) for p in db.query(
+        "SELECT * FROM picks WHERE date<=? AND market IN ('IN','US') ORDER BY date DESC", (d,))]
+    for p in allp:  # as-of view: anything that closed after the as-of date is still open
+        if p["exit_date"] and p["exit_date"] > d:
+            p.update(status="open", exit_date=None, exit_price=None, r_multiple=None)
+    sig = signals(db, d)["signals"]
+    reg = db.query("SELECT * FROM regime WHERE date=?", (d,))
+    return {
+        "date": d, "provider": s.provider, "regime": reg[0] if reg else None,
+        "jackpot": [p for p in new if p["jackpot"]], "picks": new, "open": openp,
+        "watchlist": [x for x in sig if x["market"] in ("IN", "US")][:40],
+        "record": {"all": _pick_stats(allp), "IN": _pick_stats([p for p in allp if p["market"] == "IN"]),
+                   "US": _pick_stats([p for p in allp if p["market"] == "US"]),
+                   "jackpot": _pick_stats([p for p in allp if p["jackpot"]])},
+        "closed": [p for p in allp if p["status"] != "open"][:80],
+        "calibration": db.query("SELECT * FROM calibration WHERE market IN ('IN','US') ORDER BY market, bucket"),
+        "expectations": [e for e in _view(db, d, "expectations", []) if e["symbol"] in ("^GSPC", "^NDX", "^NSEI", "^BSESN")],
+    }
+
+
+def page_commodities(db: DB, date: str | None, s: Settings | None = None) -> dict:
+    s = s or get_settings()
+    d = resolve_date(db, date)
+    if not d:
+        return {"date": None, "empty": True}
+    names = {i["symbol"]: i["name"] for i in instruments(s)}
+    stances = _stances(db, d, COMMODITIES)
+    for st in stances:
+        rows = db.query("SELECT date, close FROM prices WHERE symbol=? AND date<=? ORDER BY date DESC LIMIT 130", (st["symbol"], d))
+        st["spark"] = [{"date": r["date"], "close": r["close"]} for r in reversed(rows)]
+    allp = [_pick(p, names) for p in db.query("SELECT * FROM picks WHERE date<=? AND market='CMD' ORDER BY date DESC", (d,))]
+    for p in allp:
+        if p["exit_date"] and p["exit_date"] > d:
+            p.update(status="open", exit_date=None, exit_price=None, r_multiple=None)
+    infl = [i for i in _view(db, d, "influencers", []) if i["id"] in ("dollar", "yields", "real_yield", "fed", "oil", "gold", "vix", "geopolitics", "inflation")]
+    return {
+        "date": d, "provider": s.provider, "stances": stances,
+        "expectations": [e for e in _view(db, d, "expectations", []) if e["symbol"] in COMMODITIES],
+        "drivers": infl,
+        "stance_record": _stance_record(db, d, COMMODITIES),
+        "picks_today": [p for p in allp if p["date"] == d],
+        "open": [p for p in allp if p["status"] == "open" and p["date"] < d],
+        "closed": [p for p in allp if p["status"] != "open"][:80],
+        "pick_record": {"all": _pick_stats(allp), **{sym: dict(_pick_stats([p for p in allp if p["symbol"] == sym]), name=names[sym]) for sym in COMMODITIES},
+                        "long": _pick_stats([p for p in allp if p["direction"] == "long"]),
+                        "short": _pick_stats([p for p in allp if p["direction"] == "short"])},
+        "calibration": db.query("SELECT * FROM calibration WHERE market IN ('CMD','CMD-S') ORDER BY market, bucket"),
+        "events": [e for e in s.events() if any(a in e.get("assets", []) for a in ("GC=F", "BZ=F", "CL=F"))
+                   and pd.Timestamp(e["ts"]) >= pd.Timestamp(d).tz_localize("UTC") - pd.Timedelta(days=1)],
+    }
