@@ -177,9 +177,18 @@ COMMODITIES = ["GC=F", "SI=F", "BZ=F", "CL=F"]
 INDEX_STANCES = ["^GSPC", "^NDX", "^NSEI", "^BSESN"]
 
 
+_VIEW_CACHE: dict | None = None  # enabled during static export only (data is immutable then)
+
+
 def _view(db: DB, d: str, kind: str, default=None):
+    key = (d, kind)
+    if _VIEW_CACHE is not None and key in _VIEW_CACHE:
+        return _VIEW_CACHE[key]
     r = db.query("SELECT payload FROM daily_views WHERE date=? AND kind=?", (d, kind))
-    return dec(r[0]["payload"], default) if r else default
+    val = dec(r[0]["payload"], default) if r else default
+    if _VIEW_CACHE is not None:
+        _VIEW_CACHE[key] = val
+    return val
 
 
 def _stances(db: DB, d: str, syms: list[str]) -> list[dict]:
@@ -240,6 +249,7 @@ def page_influencers(db: DB, date: str | None, s: Settings | None = None) -> dic
         "date": d, "provider": s.provider, "regime": snap["regime"], "regime_history": snap["regime_history"],
         "influencers": _view(db, d, "influencers", []),
         "expectations": _view(db, d, "expectations", []),
+        "predictions": predictions(db, d),
         "markets": _stances(db, d, INDEX_STANCES + COMMODITIES),
         "events": snap["events"], "news": snap["news"][:12], "sentiment": snap["sentiment"],
         "alerts": [a for a in snap["alerts"] if a["severity"] in ("warning", "critical")][:12],
@@ -261,6 +271,7 @@ def page_history(db: DB, date: str | None, s: Settings | None = None) -> dict:
     first = min((c.index[0] for c in closes.values()), default=None)
     return {"date": d, "provider": s.provider, "analogs": _view(db, d, "analogs", {}),
             "expectations": _view(db, d, "expectations", []),
+            "predictions": predictions(db, d),
             "episodes": influence.episodes(s.episodes(), closes),
             "history_from": first.date().isoformat() if first is not None else None,
             "targets": influence.TARGETS}
@@ -292,6 +303,8 @@ def page_stocks(db: DB, date: str | None, s: Settings | None = None) -> dict:
         "closed": [p for p in allp if p["status"] != "open"][:80],
         "calibration": db.query("SELECT * FROM calibration WHERE market IN ('IN','US') ORDER BY market, bucket"),
         "expectations": [e for e in _view(db, d, "expectations", []) if e["symbol"] in ("^GSPC", "^NDX", "^NSEI", "^BSESN")],
+        "predictions": predictions(db, d, ["^GSPC", "^NDX", "^NSEI", "^BSESN"]),
+        "recommended": recommended_stocks(db, d, s=s),
     }
 
 
@@ -313,6 +326,7 @@ def page_commodities(db: DB, date: str | None, s: Settings | None = None) -> dic
     return {
         "date": d, "provider": s.provider, "stances": stances,
         "expectations": [e for e in _view(db, d, "expectations", []) if e["symbol"] in COMMODITIES],
+        "predictions": predictions(db, d, COMMODITIES),
         "drivers": infl,
         "stance_record": _stance_record(db, d, COMMODITIES),
         "picks_today": [p for p in allp if p["date"] == d],
@@ -325,3 +339,143 @@ def page_commodities(db: DB, date: str | None, s: Settings | None = None) -> dic
         "events": [e for e in s.events() if any(a in e.get("assets", []) for a in ("GC=F", "BZ=F", "CL=F"))
                    and pd.Timestamp(e["ts"]) >= pd.Timestamp(d).tz_localize("UTC") - pd.Timedelta(days=1)],
     }
+
+
+# ============================================================ predictions: call, exit, confidence, track record
+PRED_H = 5
+
+
+def _call(e: dict) -> str:
+    p = e.get("prob_up_5d", 0.5)
+    m = (e.get("analog5") or {}).get("median", 0) or 0
+    if p >= 0.6 and m > 0:
+        return "BUY"
+    if p <= 0.4 and m < 0:
+        return "SELL"
+    return "WATCH"
+
+
+def _judge(call: str, e: dict, close5: float) -> bool:
+    ret = close5 / e["close"] - 1
+    if call == "BUY":
+        return ret > 0
+    if call == "SELL":
+        return ret < 0
+    r = e.get("range5")
+    return bool(r) and r[0] <= close5 <= r[1]  # WATCH = "no big move": price stayed inside the expected range
+
+
+def _closes(db: DB, syms: list[str], d: str) -> dict[str, pd.Series]:
+    out = {}
+    for sym in syms:
+        rows = db.query("SELECT date, close FROM prices WHERE symbol=? AND date<=? ORDER BY date", (sym, d))
+        if rows:
+            out[sym] = pd.Series([r["close"] for r in rows], index=[r["date"] for r in rows])
+    return out
+
+
+def predictions(db: DB, d: str, syms: list[str] | None = None, sets: int = 20) -> dict:
+    """Enrich the as-of expectations with call / exit / confidence, and score the last `sets` prediction sets."""
+    today = _view(db, d, "expectations", []) or []
+    if syms:
+        today = [e for e in today if e["symbol"] in syms]
+    syms = [e["symbol"] for e in today]
+    closes = _closes(db, syms, d)
+    past_dates = [r["date"] for r in db.query(
+        "SELECT date FROM daily_views WHERE kind='expectations' AND date<? ORDER BY date DESC LIMIT ?", (d, sets + PRED_H + 10))]
+    history, per = [], {s: [] for s in syms}
+    for pdt in past_dates:
+        rows = {e["symbol"]: e for e in (_view(db, pdt, "expectations", []) or []) if e["symbol"] in syms}
+        item = {"date": pdt, "calls": {}}
+        resolved = False
+        for sym, e in rows.items():
+            c = closes.get(sym)
+            if c is None or pdt not in c.index:
+                continue
+            i = c.index.get_loc(pdt)
+            call = _call(e)
+            rec = {"call": call, "close": e["close"], "exit": e.get("center5")}
+            if i + PRED_H < len(c):  # window closed by the as-of date
+                c5 = float(c.iloc[i + PRED_H])
+                ok = _judge(call, e, c5)
+                rec.update(close5=c5, ret5=(c5 / e["close"] - 1) * 100, result="success" if ok else "fail")
+                per[sym].append(ok)
+                resolved = True
+            else:
+                rec["result"] = "pending"
+            item["calls"][sym] = rec
+        if item["calls"] and (resolved or len(history) < 3):
+            history.append(item)
+        if sum(1 for h in history if any(v.get("result") != "pending" for v in h["calls"].values())) >= sets:
+            break
+    summary = {}
+    for sym in syms:
+        res = per[sym][:sets]
+        n, hits = len(res), sum(res)
+        summary[sym] = {"n": n, "hits": hits, "rate": hits / n if n else None,
+                        "shrunk": (hits + 2) / (n + 4)}  # small samples pulled toward 50%
+    rows = []
+    for e in today:
+        call = _call(e)
+        p = e.get("prob_up_5d", 0.5)
+        model = p if call == "BUY" else (1 - p) if call == "SELL" else 0.68
+        track = summary[e["symbol"]]["shrunk"]
+        conf = round(100 * (0.5 * model + 0.5 * track))
+        r5 = e.get("range5") or [None, None]
+        exit_px = e.get("center5") or e["close"]
+        stop = r5[0] if call == "BUY" else r5[1] if call == "SELL" else None
+        rows.append(dict(e, call=call, confidence=conf, model_prob=model, exit=exit_px, stop=stop,
+                         track=summary[e["symbol"]]))
+    allres = [x for s in syms for x in per[s][:sets]]
+    overall = {"n": len(allres), "hits": sum(allres), "rate": (sum(allres) / len(allres)) if allres else None,
+               "confidence": round(sum(r["confidence"] for r in rows) / len(rows)) if rows else None}
+    return {"rows": rows, "sets": history[:sets + PRED_H], "summary": summary, "overall": overall,
+            "rules": "BUY: P(up 5d) >= 60% and analog median > 0. SELL: P(up) <= 40% and median < 0. "
+                     "WATCH otherwise. Success = 5 trading days later price moved the called way "
+                     "(WATCH: stayed inside the expected range). Confidence = 50% model probability + "
+                     "50% this asset's last-20 success rate (shrunk toward 50%)."}
+
+
+def recommended_stocks(db: DB, d: str, per_market: int = 15, s: Settings | None = None) -> dict:
+    """Ranked stock list per market with confidence, entry and exit (target) prices."""
+    from .engines import trades
+    s = s or get_settings()
+    insts = {i["symbol"]: i for i in instruments(s)}
+    calib = {(c["market"], c["bucket"]): c for c in db.query("SELECT * FROM calibration")}
+    hist = {}
+    for r in db.query("SELECT symbol, status, r_multiple FROM picks WHERE exit_date<=? AND status!='open'", (d,)):
+        h = hist.setdefault(r["symbol"], [0, 0])
+        h[0] += 1
+        h[1] += int((r["r_multiple"] or 0) > 0)
+    out = {}
+    for mkt in ("IN", "US"):
+        rows = db.query("SELECT * FROM signals WHERE date=? AND market=? ORDER BY score DESC", (d, mkt))
+        lst = []
+        for r in rows:
+            if r["score"] < 50 or r["trend"] == "downtrend":
+                continue
+            px = db.query("SELECT high FROM prices WHERE symbol=? AND date<=? ORDER BY date DESC LIMIT 10", (r["symbol"], d))
+            hi10 = max(x["high"] for x in px) if px else r["close"]
+            if r["score"] >= s.min_pick_score:
+                call, entry = "BUY", r["close"]
+            else:
+                call, entry = "WATCH", max(hi10, r["close"])  # buy only on a break above the 10-day high
+            stop = entry - 1.5 * r["atr"]
+            exit_px = entry + s.reward_risk * (entry - stop)
+            b = trades.bucket(r["score"]) or "70-79"
+            cal = calib.get((mkt, b))
+            hit = cal["hit_rate"] if cal else 0.45
+            if r["score"] < s.min_pick_score:
+                hit *= 0.9  # untriggered setups are less reliable than triggered ones
+            own = hist.get(r["symbol"])
+            own_rate = (own[1] + 1) / (own[0] + 2) if own else None
+            conf = 0.45 * (r["score"] / 100) + 0.40 * hit + 0.15 * (own_rate if own_rate is not None else hit)
+            lst.append({"symbol": r["symbol"], "name": insts.get(r["symbol"], {}).get("name", r["symbol"]),
+                        "sector": insts.get(r["symbol"], {}).get("sector"), "call": call, "score": r["score"],
+                        "confidence": round(conf * 100), "close": r["close"], "entry": entry, "stop": stop,
+                        "exit": exit_px, "upside": exit_px / entry - 1, "risk": 1 - stop / entry,
+                        "hit_rate": hit, "own_record": {"closed": own[0], "wins": own[1]} if own else None,
+                        "rsi": r["rsi"], "trend": r["trend"], "patterns": dec(r["patterns"], [])})
+        lst.sort(key=lambda x: (x["call"] != "BUY", -x["confidence"]))
+        out[mkt] = lst[:per_market]
+    return out

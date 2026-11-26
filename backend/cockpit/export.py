@@ -15,6 +15,7 @@ def _w(path: Path, obj) -> None:
 
 def export(db: DB, out: str, days: int = 60) -> dict:
     root = Path(out)
+    service._VIEW_CACHE = {}
     all_dates = service.dates(db)[-days:]
     for d in all_dates:
         _w(root / "snapshot" / f"{d}.json", service.snapshot(db, d))
@@ -29,4 +30,5 @@ def export(db: DB, out: str, days: int = 60) -> dict:
     _w(root / "track-record.json", service.track_record(db, latest))
     _w(root / "health.json", service.health(db))
     _w(root / "dates.json", {"dates": all_dates})
+    service._VIEW_CACHE = None
     return {"dates": len(all_dates), "instruments": len(syms), "latest": latest}

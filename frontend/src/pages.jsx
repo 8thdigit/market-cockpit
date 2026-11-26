@@ -125,9 +125,9 @@ export function InfluencersPage({ date, openSym }) {
         </Card>
       ))}
 
-      <Card title="What to expect — next 5 and 10 trading days" className="span-8" id="p1-expect">
-        <ExpectTable rows={data.expectations} openSym={openSym} />
-        <p className="note">Range = ±1 standard deviation of recent daily moves (about 2 in 3 outcomes land inside). "Analogs" = the 15 most similar past setups (see History page).</p>
+      <Card title="What to expect — next 5 trading days: call, confidence, expected exit" className="span-8" id="p1-expect">
+        <ExpectTable pred={data.predictions} rows={data.expectations} openSym={openSym} />
+        <p className="note">Call: BUY / SELL / WATCH for the next 5 trading days. Expected exit = analog median 5-day outcome; stop = far edge of the range. Range = ±1 standard deviation of recent daily moves (about 2 in 3 outcomes land inside). "Analogs" = the 15 most similar past setups (see History page).</p>
       </Card>
       <div className="span-4 stack">
         <Card title="Upcoming events" id="p1-events">
@@ -149,25 +149,87 @@ export function InfluencersPage({ date, openSym }) {
           </Card>
         )}
       </div>
+      <PredictionRecord pred={data.predictions} />
     </div>
   )
 }
 
-function ExpectTable({ rows, openSym }) {
+function CallBadge({ c }) {
+  return <span className={`stance st-${c === 'BUY' ? 'buy' : c === 'SELL' ? 'sell' : 'wait'}`}>{c}</span>
+}
+
+function ConfScore({ v }) {
+  const cls = v >= 65 ? 'good' : v >= 55 ? 'mid' : 'bad'
+  return <span className="cscore"><i><b className={cls} style={{ width: `${v}%` }} /></i><em className={cls}>{v}</em></span>
+}
+
+function ExpectTable({ pred, rows, openSym }) {
+  const list = pred?.rows || rows || []
   return (
     <div className="tw"><table>
-      <thead><tr><th>Asset</th><th className="n">Now</th><th>5-day range</th><th className="n">Analog median 5d</th><th className="n">Analog median 10d</th><th>Bias (P up 5d)</th></tr></thead>
-      <tbody>{rows.map((e) => (
-        <tr key={e.symbol}>
-          <td><button className="link" onClick={() => openSym(e.symbol)}>{e.name}</button></td>
-          <td className="n">{e.symbol === '^TNX' ? `${fmt.num(e.close, 2)}%` : fmt.price(e.close)}</td>
-          <td>{e.range5 ? <RangeBar lo={e.range5[0]} hi={e.range5[1]} c={e.close} center={e.center5} /> : '—'}</td>
-          <td className={`n ${tone(e.analog5?.median)}`}>{signed(e.analog5?.median)}</td>
-          <td className={`n ${tone(e.analog10?.median)}`}>{signed(e.analog10?.median)}</td>
-          <td><Bias b={e.bias} p={e.prob_up_5d} /></td>
-        </tr>
-      ))}</tbody>
+      <thead><tr><th>Asset</th><th className="n">Now</th><th>Call</th><th>Confidence</th><th className="n">Expected exit (5d)</th>
+        <th className="n">Stop</th><th>5-day range</th><th>P(up 5d)</th><th className="n">Last 20</th></tr></thead>
+      <tbody>{list.map((e) => {
+        const isRate = e.symbol === '^TNX'
+        const px = (v) => (v == null ? '—' : isRate ? `${fmt.num(v, 2)}%` : fmt.price(v))
+        const chg = e.exit != null ? (e.exit / e.close - 1) * 100 : null
+        return (
+          <tr key={e.symbol}>
+            <td><button className="link" onClick={() => openSym(e.symbol)}>{e.name}</button></td>
+            <td className="n">{px(e.close)}</td>
+            <td>{e.call ? <CallBadge c={e.call} /> : <Bias b={e.bias} />}</td>
+            <td>{e.confidence != null ? <ConfScore v={e.confidence} /> : '—'}</td>
+            <td className="n">{px(e.exit ?? e.center5)} <small className={tone(chg)}>{chg != null ? signed(chg) : ''}</small></td>
+            <td className="n bad">{px(e.stop)}</td>
+            <td>{e.range5 ? <RangeBar lo={e.range5[0]} hi={e.range5[1]} c={e.close} center={e.exit ?? e.center5} /> : '—'}</td>
+            <td><Bias b={e.bias} p={e.prob_up_5d} /></td>
+            <td className="n">{e.track ? <span title="Successful predictions out of the last resolved ones">{e.track.hits}/{e.track.n} <small className="muted">{e.track.rate != null ? `${Math.round(e.track.rate * 100)}%` : ''}</small></span> : '—'}</td>
+          </tr>
+        )
+      })}</tbody>
     </table></div>
+  )
+}
+
+function PredictionRecord({ pred, title = 'Prediction track record — last 20 sets' }) {
+  if (!pred?.sets?.length) return null
+  const syms = pred.rows.map((r) => r.symbol)
+  const names = Object.fromEntries(pred.rows.map((r) => [r.symbol, r.name]))
+  const o = pred.overall
+  return (
+    <Card title={title} className="span-12" id="pred-record"
+      right={<span className="muted sm">Each call checked 5 trading days later</span>}>
+      <div className="stats">
+        <Stat l="Resolved predictions" v={o.n} />
+        <Stat l="Successful" v={o.hits} cls="good" />
+        <Stat l="Failed" v={o.n - o.hits} cls="bad" />
+        <Stat l="Success rate" v={<Pct v={o.rate} />} />
+        <Stat l="Overall confidence today" v={o.confidence != null ? `${o.confidence}/100` : '—'} />
+      </div>
+      <div className="tw scroll"><table className="matrix">
+        <thead><tr><th>Date</th>{syms.map((s) => <th key={s} className="c">{names[s]}</th>)}</tr></thead>
+        <tbody>
+          {pred.sets.map((set) => (
+            <tr key={set.date}><td>{set.date}</td>{syms.map((s) => {
+              const c = set.calls[s]
+              if (!c) return <td key={s} className="c muted">—</td>
+              const cls = c.result === 'success' ? 'ok' : c.result === 'fail' ? 'ko' : 'pend'
+              return (
+                <td key={s} className={`c cell-${cls}`} title={`${c.call} at ${fmt.price(c.close)}${c.close5 ? ` → ${fmt.price(c.close5)} (${signed(c.ret5)})` : ' (pending)'}`}>
+                  <b>{c.call[0]}</b> {c.result === 'success' ? '✓' : c.result === 'fail' ? '✗' : '…'}
+                  {c.ret5 != null && <small> {signed(c.ret5)}</small>}
+                </td>
+              )
+            })}</tr>
+          ))}
+          <tr className="sumrow"><td>Success</td>{syms.map((s) => {
+            const t = pred.summary[s]
+            return <td key={s} className="c"><b>{t.rate != null ? `${Math.round(t.rate * 100)}%` : '—'}</b> <small className="muted">{t.hits}/{t.n}</small></td>
+          })}</tr>
+        </tbody>
+      </table></div>
+      <p className="note">B = buy, S = sell, W = watch. {pred.rules}</p>
+    </Card>
   )
 }
 
@@ -240,8 +302,9 @@ export function HistoryPage({ date }) {
       </Card>
 
       <Card title="What we can expect next few days" className="span-12" id="p2-expect">
-        <ExpectTable rows={data.expectations} openSym={() => {}} />
+        <ExpectTable pred={data.predictions} rows={data.expectations} openSym={() => {}} />
       </Card>
+      <PredictionRecord pred={data.predictions} />
 
       <div className="span-12 section-h"><h2>Historical reference episodes</h2><p>Moves computed from stored prices for each window (where history covers it).</p></div>
       {data.episodes.map((e) => (
@@ -325,10 +388,17 @@ export function StocksPage({ date, openSym }) {
         ) : <Empty>No new stock setups scored 70+ on this date.</Empty>}
       </Card>
 
-      <Card title="Index outlook" className="span-5" id="p3-index">
-        <ExpectTable rows={data.expectations} openSym={openSym} />
+      {['IN', 'US'].map((m) => (
+        <Card key={m} title={`Recommended ${m === 'IN' ? 'India' : 'US'} stocks`} className="span-6" id={`p3-rec-${m}`}
+          right={<span className="muted sm">BUY = triggered now · WATCH = buy only above entry</span>}>
+          <RecList rows={data.recommended?.[m] || []} openSym={openSym} />
+        </Card>
+      ))}
+      <Card title="Index outlook — next 5 days" className="span-12" id="p3-index">
+        <ExpectTable pred={data.predictions} rows={data.expectations} openSym={openSym} />
       </Card>
-      <Card title="Watchlist — closest to a trigger" className="span-7" id="p3-watch">
+      <PredictionRecord pred={data.predictions} title="Index prediction track record — last 20 sets" />
+      <Card title="Watchlist — closest to a trigger" className="span-12" id="p3-watch">
         <div className="tw"><table>
           <thead><tr><th>Stock</th><th>Score</th><th>Trend</th><th className="n">RSI</th><th className="n">RS 3m</th><th>Candles</th></tr></thead>
           <tbody>{data.watchlist.filter((s) => s.score >= 50).slice(0, 15).map((s) => (
@@ -348,6 +418,27 @@ export function StocksPage({ date, openSym }) {
       </Card>
       <Card title="Calibration — historical replay by score" className="span-12" id="p3-calib"><Calib rows={data.calibration} /></Card>
     </div>
+  )
+}
+
+function RecList({ rows, openSym }) {
+  if (!rows.length) return <Empty>No stock in an uptrend scores 50+ today.</Empty>
+  return (
+    <div className="tw"><table>
+      <thead><tr><th>Stock</th><th>Call</th><th>Confidence</th><th className="n">Entry</th><th className="n">Exit (target)</th>
+        <th className="n">Stop</th><th className="n">Past picks</th></tr></thead>
+      <tbody>{rows.map((r) => (
+        <tr key={r.symbol}>
+          <td><button className="link" onClick={() => openSym(r.symbol)}>{r.name}</button><div className="muted sm">{r.symbol} · score {Math.round(r.score)}</div></td>
+          <td><CallBadge c={r.call} /></td>
+          <td><ConfScore v={r.confidence} /></td>
+          <td className="n">{r.call === 'WATCH' ? <small className="muted">above </small> : null}{fmt.price(r.entry)}</td>
+          <td className="n good">{fmt.price(r.exit)} <small>{fmt.pct(r.upside)}</small></td>
+          <td className="n bad">{fmt.price(r.stop)} <small>{fmt.pct(-r.risk)}</small></td>
+          <td className="n">{r.own_record ? `${r.own_record.wins}/${r.own_record.closed}` : '—'}</td>
+        </tr>
+      ))}</tbody>
+    </table></div>
   )
 }
 
@@ -431,6 +522,10 @@ export function CommoditiesPage({ date, openSym }) {
         </Card>
       ))}
 
+      <Card title="Next 5 days — call, confidence, expected exit" className="span-12" id="p4-expect">
+        <ExpectTable pred={data.predictions} rows={data.expectations} openSym={openSym} />
+      </Card>
+      <PredictionRecord pred={data.predictions} title="5-day prediction track record — last 20 sets" />
       <Card title="Recommendation track record (each call checked 5 trading days later)" className="span-12" id="p4-record">
         <div className="stats">
           <Stat l="Directional calls" v={sr.overall.calls} sub={`${sr.overall.pending} pending`} />

@@ -208,3 +208,11 @@ table.mini { font-size: 12px; } table.mini td, table.mini th { padding: 3px 4px;
 .ps-bar { height: 8px; background: var(--grid); border-radius: 4px; overflow: hidden; } .ps-bar i { display: block; height: 8px; background: var(--up); }
 .tw.scroll { max-height: 460px; overflow: auto; }
 .drv { list-style: none; margin: 0; padding: 0; } .drv li { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--grid); align-items: center; font-size: 13px; }
+.cscore { display: inline-flex; align-items: center; gap: 6px; }
+.cscore i { width: 56px; height: 7px; background: var(--grid); border-radius: 4px; overflow: hidden; display: inline-block; }
+.cscore b { display: block; height: 7px; } .cscore b.good { background: var(--up); } .cscore b.mid { background: var(--warn); } .cscore b.bad { background: var(--down); }
+.cscore em { font-style: normal; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 22px; }
+table.matrix td.c, table.matrix th.c { text-align: center; white-space: nowrap; }
+table.matrix td.c small { color: var(--muted); font-size: 10px; }
+.cell-ok { background: rgba(38,182,127,.12); color: var(--up); } .cell-ko { background: rgba(239,83,80,.12); color: var(--down); } .cell-pend { color: var(--muted); }
+.sumrow td { border-top: 2px solid var(--line); font-weight: 600; }

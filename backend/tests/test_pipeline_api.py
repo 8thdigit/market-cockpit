@@ -84,3 +84,15 @@ def test_short_simulation_mirror():
     # short from 100, stop 103, target 94 -> target hit on day 2 (low 93)
     res = trades.simulate(indicators.invert(bars), 1 / 100, 1 / 103, 1 / 94, 15)
     assert res[0] == "target"
+
+
+def test_predictions_and_recommended(client):
+    i = client.get("/api/page/influencers").json()
+    p = i["predictions"]
+    assert p["rows"] and all(r["call"] in {"BUY", "SELL", "WATCH"} and 0 <= r["confidence"] <= 100 for r in p["rows"])
+    assert all("exit" in r for r in p["rows"])
+    assert p["overall"]["n"] >= 0 and isinstance(p["sets"], list)
+    st = client.get("/api/page/stocks").json()
+    for mkt in ("IN", "US"):
+        for r in st["recommended"][mkt]:
+            assert r["call"] in {"BUY", "WATCH"} and r["exit"] > r["entry"] > r["stop"]
