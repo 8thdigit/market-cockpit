@@ -11,3 +11,4 @@ frontend/dist/
 frontend/public/data/
 *.log
 .DS_Store
+.pydeps/

@@ -112,3 +112,10 @@ GitHub's scheduler can delay runs by several minutes; for tighter monitoring run
 - Daily bars only; "intraday" runs refresh today's forming bar.
 - When backfilling, calibration uses the full history, so historical picks carry slight look-ahead in their displayed hit-rate. Live picks don't.
 - Long-only setups; bearish signals appear as alerts and score penalties.
+
+## Deploy on Vercel
+
+`vercel.json` + `scripts/vercel-build.sh`: every Vercel build downloads live prices, macro data and headlines, analyses them, exports static JSON and publishes the dashboard. A build fails on purpose if the live feed mostly fails, so the last good deployment stays up.
+
+- **Fresh data every 30 min:** create a Deploy Hook (Vercel → Project → Settings → Git → Deploy Hooks, branch `main`) and save its URL as the GitHub secret `VERCEL_DEPLOY_HOOK`. The *Monitor markets* workflow then triggers a rebuild after each run.
+- **Keep full history across builds (optional):** add a Vercel env var `GITHUB_DATA_TOKEN`, a fine-grained GitHub token with read-only *Contents* access to this repo. The build then restores the database the workflow saves on the `data` branch.

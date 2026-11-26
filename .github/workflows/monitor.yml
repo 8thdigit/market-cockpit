@@ -73,6 +73,12 @@ jobs:
           git commit -qm "data snapshot $(date -u +%FT%TZ)"
           git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" data
 
+      - name: Refresh the Vercel deployment (if VERCEL_DEPLOY_HOOK secret is set)
+        env:
+          HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+        run: |
+          if [ -n "$HOOK" ]; then curl -fsS -X POST "$HOOK" && echo " -> Vercel rebuild triggered"; else echo "no Vercel hook configured"; fi
+
       - name: Export static data
         working-directory: backend
         run: python -m cockpit export --out ../frontend/public/data --days 90
