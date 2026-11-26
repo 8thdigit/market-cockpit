@@ -1,0 +1,11 @@
+{
+  "_comment": "Scheduled market events. Times are UTC (ISO 8601). impact: low | medium | high | very_high. Add new events here; the engine raises alerts as they approach. Verify dates against official calendars (federalreserve.gov, rbi.org.in, bls.gov, opec.org).",
+  "events": [
+    {"ts": "2026-11-27T18:00:00Z", "title": "US half-day session (post-Thanksgiving)", "impact": "medium", "assets": ["US", "GC=F"], "category": "market"},
+    {"ts": "2026-11-29T13:00:00Z", "title": "OPEC+ ministerial meeting — 2027 quotas", "impact": "high", "assets": ["BZ=F", "CL=F", "IN"], "category": "opec"},
+    {"ts": "2026-12-04T04:30:00Z", "title": "RBI monetary policy decision", "impact": "high", "assets": ["IN", "INR=X"], "category": "central_bank"},
+    {"ts": "2026-12-04T13:30:00Z", "title": "US nonfarm payrolls (November) — verify date at bls.gov", "impact": "high", "assets": ["US", "DX-Y.NYB", "GC=F", "^TNX"], "category": "data"},
+    {"ts": "2026-12-09T19:00:00Z", "title": "FOMC decision + projections", "impact": "very_high", "assets": ["US", "IN", "GC=F", "DX-Y.NYB", "^TNX"], "category": "central_bank"},
+    {"ts": "2026-12-10T13:30:00Z", "title": "US CPI (November) — verify date at bls.gov", "impact": "high", "assets": ["US", "GC=F", "^TNX"], "category": "data"}
+  ]
+}

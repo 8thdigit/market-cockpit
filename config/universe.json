@@ -1,0 +1,63 @@
+{
+  "_comment": "Instruments monitored. kind: index | commodity | fx | rate | equity | etf. 'benchmark' is used for relative strength.",
+  "macro": [
+    {"symbol": "^GSPC", "name": "S&P 500", "market": "US", "kind": "index"},
+    {"symbol": "^NDX", "name": "Nasdaq-100", "market": "US", "kind": "index"},
+    {"symbol": "^DJI", "name": "Dow Jones", "market": "US", "kind": "index"},
+    {"symbol": "^RUT", "name": "Russell 2000", "market": "US", "kind": "index"},
+    {"symbol": "RSP", "name": "S&P 500 Equal Weight", "market": "US", "kind": "etf"},
+    {"symbol": "^VIX", "name": "VIX", "market": "US", "kind": "index"},
+    {"symbol": "^NSEI", "name": "Nifty 50", "market": "IN", "kind": "index"},
+    {"symbol": "^BSESN", "name": "Sensex", "market": "IN", "kind": "index"},
+    {"symbol": "^NSEBANK", "name": "Bank Nifty", "market": "IN", "kind": "index"},
+    {"symbol": "^INDIAVIX", "name": "India VIX", "market": "IN", "kind": "index"},
+    {"symbol": "GC=F", "name": "Gold (COMEX)", "market": "CMD", "kind": "commodity", "tradable": true},
+    {"symbol": "SI=F", "name": "Silver (COMEX)", "market": "CMD", "kind": "commodity", "tradable": true},
+    {"symbol": "BZ=F", "name": "Brent crude", "market": "CMD", "kind": "commodity", "tradable": true},
+    {"symbol": "CL=F", "name": "WTI crude", "market": "CMD", "kind": "commodity", "tradable": true},
+    {"symbol": "DX-Y.NYB", "name": "US Dollar Index", "market": "FX", "kind": "fx"},
+    {"symbol": "INR=X", "name": "USD/INR", "market": "FX", "kind": "fx"},
+    {"symbol": "^TNX", "name": "US 10-yr yield", "market": "US", "kind": "rate"}
+  ],
+  "equities": {
+    "IN": {
+      "benchmark": "^NSEI",
+      "symbols": [
+        ["RELIANCE.NS", "Reliance Industries", "Energy"], ["HDFCBANK.NS", "HDFC Bank", "Financials"],
+        ["ICICIBANK.NS", "ICICI Bank", "Financials"], ["SBIN.NS", "State Bank of India", "Financials"],
+        ["AXISBANK.NS", "Axis Bank", "Financials"], ["KOTAKBANK.NS", "Kotak Mahindra Bank", "Financials"],
+        ["BAJFINANCE.NS", "Bajaj Finance", "Financials"], ["INFY.NS", "Infosys", "IT"],
+        ["TCS.NS", "TCS", "IT"], ["HCLTECH.NS", "HCLTech", "IT"], ["WIPRO.NS", "Wipro", "IT"],
+        ["BHARTIARTL.NS", "Bharti Airtel", "Telecom"], ["LT.NS", "Larsen & Toubro", "Industrials"],
+        ["ITC.NS", "ITC", "Staples"], ["HINDUNILVR.NS", "Hindustan Unilever", "Staples"],
+        ["MARUTI.NS", "Maruti Suzuki", "Auto"], ["M&M.NS", "Mahindra & Mahindra", "Auto"],
+        ["BAJAJ-AUTO.NS", "Bajaj Auto", "Auto"], ["EICHERMOT.NS", "Eicher Motors", "Auto"],
+        ["SUNPHARMA.NS", "Sun Pharma", "Healthcare"], ["MANKIND.NS", "Mankind Pharma", "Healthcare"],
+        ["DRREDDY.NS", "Dr Reddy's", "Healthcare"], ["TITAN.NS", "Titan", "Consumer"],
+        ["ASIANPAINT.NS", "Asian Paints", "Consumer"], ["ULTRACEMCO.NS", "UltraTech Cement", "Materials"],
+        ["TATASTEEL.NS", "Tata Steel", "Materials"], ["HINDALCO.NS", "Hindalco", "Materials"],
+        ["NTPC.NS", "NTPC", "Utilities"], ["POWERGRID.NS", "Power Grid", "Utilities"],
+        ["ONGC.NS", "ONGC", "Energy"], ["BPCL.NS", "BPCL", "Energy"], ["CDSL.NS", "CDSL", "Financials"],
+        ["BALKRISIND.NS", "Balkrishna Industries", "Auto"], ["BRIGADE.NS", "Brigade Enterprises", "Realty"],
+        ["GOLDBEES.NS", "Nippon Gold BeES ETF", "Gold ETF"]
+      ]
+    },
+    "US": {
+      "benchmark": "^GSPC",
+      "symbols": [
+        ["AAPL", "Apple", "Tech"], ["MSFT", "Microsoft", "Tech"], ["NVDA", "Nvidia", "Semis"],
+        ["AMZN", "Amazon", "Consumer"], ["META", "Meta", "Comm"], ["GOOGL", "Alphabet", "Comm"],
+        ["AVGO", "Broadcom", "Semis"], ["ANET", "Arista Networks", "Tech"], ["TSLA", "Tesla", "Consumer"],
+        ["JPM", "JPMorgan", "Financials"], ["V", "Visa", "Financials"], ["MA", "Mastercard", "Financials"],
+        ["GS", "Goldman Sachs", "Financials"], ["LLY", "Eli Lilly", "Healthcare"], ["UNH", "UnitedHealth", "Healthcare"],
+        ["JNJ", "Johnson & Johnson", "Healthcare"], ["ABBV", "AbbVie", "Healthcare"], ["COST", "Costco", "Staples"],
+        ["WMT", "Walmart", "Staples"], ["KR", "Kroger", "Staples"], ["PG", "Procter & Gamble", "Staples"],
+        ["XOM", "Exxon Mobil", "Energy"], ["CVX", "Chevron", "Energy"], ["CAT", "Caterpillar", "Industrials"],
+        ["GE", "GE Aerospace", "Industrials"], ["LMT", "Lockheed Martin", "Defense"], ["WAT", "Waters", "Healthcare"],
+        ["TTWO", "Take-Two", "Comm"], ["NFLX", "Netflix", "Comm"], ["HD", "Home Depot", "Consumer"],
+        ["SPY", "SPDR S&P 500 ETF", "ETF"], ["QQQ", "Invesco QQQ", "ETF"], ["XLE", "Energy Select ETF", "ETF"],
+        ["XLV", "Health Care Select ETF", "ETF"], ["GLD", "SPDR Gold ETF", "ETF"]
+      ]
+    }
+  }
+}

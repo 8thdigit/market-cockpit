@@ -1,0 +1,97 @@
+# Continuous monitoring without a server:
+# collects live data on a schedule, keeps the history database on the `data` branch,
+# and publishes the dashboard (static mode) to GitHub Pages.
+# One-time setup: Settings -> Pages -> Source: "GitHub Actions". Optional secret: FRED_API_KEY.
+name: Monitor markets
+
+on:
+  schedule:
+    - cron: "*/30 3-10 * * 1-5"   # India session (UTC)
+    - cron: "*/30 14-21 * * 1-5"  # US session (UTC)
+    - cron: "45 22 * * 1-5"       # end of day: macro + 10-day re-analysis
+  workflow_dispatch:
+    inputs:
+      backfill_days:
+        description: "Re-analyse this many trading days (use 250 on first run)"
+        default: "5"
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      COCKPIT_PROVIDER: yahoo
+      COCKPIT_DB: ${{ github.workspace }}/data/cockpit.db
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore history database from the data branch
+        run: |
+          mkdir -p data
+          if git fetch --depth=1 origin data 2>/dev/null; then
+            git show origin/data:cockpit.db > data/cockpit.db && echo "restored $(du -h data/cockpit.db | cut -f1)"
+          else
+            echo "no data branch yet: first run builds history"
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r backend/requirements.txt
+
+      - name: Collect + analyse
+        working-directory: backend
+        run: |
+          DAYS="${{ github.event.inputs.backfill_days }}"
+          if [ ! -s "$COCKPIT_DB" ]; then python -m cockpit backfill --days 250
+          elif [ -n "$DAYS" ] && [ "$DAYS" -gt 20 ]; then python -m cockpit backfill --days "$DAYS"
+          elif [ "$(date -u +%H)" = "22" ]; then python -m cockpit run --days 10
+          else python -m cockpit run --days "${DAYS:-3}"; fi
+          python -m cockpit status | head -c 3000
+
+      - name: Save history database to the data branch
+        run: |
+          cp data/cockpit.db /tmp/cockpit.db
+          cd /tmp && rm -rf databranch && mkdir databranch && cd databranch
+          git init -q -b data
+          git config user.name "cockpit-bot"
+          git config user.email "cockpit-bot@users.noreply.github.com"
+          cp /tmp/cockpit.db .
+          git add cockpit.db
+          git commit -qm "data snapshot $(date -u +%FT%TZ)"
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" data
+
+      - name: Export static data
+        working-directory: backend
+        run: python -m cockpit export --out ../frontend/public/data --days 90
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build dashboard (static mode)
+        working-directory: frontend
+        env:
+          VITE_STATIC: "1"
+          VITE_BASE: /${{ github.event.repository.name }}/
+        run: npm ci && npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+      - id: deploy
+        uses: actions/deploy-pages@v4
+        continue-on-error: true  # Pages not enabled yet -> data is still saved

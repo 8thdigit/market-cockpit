@@ -1,0 +1,17 @@
+services:
+  cockpit:
+    build: .
+    image: market-cockpit:latest
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      COCKPIT_PROVIDER: ${COCKPIT_PROVIDER:-yahoo}
+    volumes:
+      - cockpit-data:/data
+
+volumes:
+  cockpit-data:
