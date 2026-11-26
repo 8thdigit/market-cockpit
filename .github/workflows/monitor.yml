@@ -73,11 +73,24 @@ jobs:
           git commit -qm "data snapshot $(date -u +%FT%TZ)"
           git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" data
 
-      - name: Refresh the Vercel deployment (if VERCEL_DEPLOY_HOOK secret is set)
+      - name: Refresh the Vercel deployment
+        # Either secret works: VERCEL_DEPLOY_HOOK (project linked to Git) or VERCEL_TOKEN (any setup).
         env:
           HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_TEAM: ${{ vars.VERCEL_TEAM_ID || 'team_FFaR7QnMVdSBI0h5deiSGPDJ' }}
+          VERCEL_PROJECT: ${{ vars.VERCEL_PROJECT || 'market-cockpit' }}
         run: |
-          if [ -n "$HOOK" ]; then curl -fsS -X POST "$HOOK" && echo " -> Vercel rebuild triggered"; else echo "no Vercel hook configured"; fi
+          if [ -n "$HOOK" ]; then
+            curl -fsS -X POST "$HOOK" && echo " -> Vercel rebuild triggered (hook)"
+          elif [ -n "$VERCEL_TOKEN" ]; then
+            curl -fsS -X POST "https://api.vercel.com/v13/deployments?teamId=$VERCEL_TEAM&skipAutoDetectionConfirmation=1" \
+              -H "Authorization: Bearer $VERCEL_TOKEN" -H "Content-Type: application/json" \
+              -d "{\"name\":\"$VERCEL_PROJECT\",\"project\":\"$VERCEL_PROJECT\",\"target\":\"production\",\"gitSource\":{\"type\":\"github\",\"org\":\"${GITHUB_REPOSITORY%/*}\",\"repo\":\"${GITHUB_REPOSITORY#*/}\",\"ref\":\"main\"}}" \
+              | head -c 300 && echo " -> Vercel rebuild triggered (API)"
+          else
+            echo "no Vercel secret configured"
+          fi
 
       - name: Export static data
         working-directory: backend

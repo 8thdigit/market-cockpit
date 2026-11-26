@@ -117,5 +117,7 @@ GitHub's scheduler can delay runs by several minutes; for tighter monitoring run
 
 `vercel.json` + `scripts/vercel-build.sh`: every Vercel build downloads live prices, macro data and headlines, analyses them, exports static JSON and publishes the dashboard. A build fails on purpose if the live feed mostly fails, so the last good deployment stays up.
 
-- **Fresh data every 30 min:** create a Deploy Hook (Vercel → Project → Settings → Git → Deploy Hooks, branch `main`) and save its URL as the GitHub secret `VERCEL_DEPLOY_HOOK`. The *Monitor markets* workflow then triggers a rebuild after each run.
+Live at **https://market-cockpit-lovat.vercel.app** (project `market-cockpit`, team `dev8thdigits-projects`).
+
+- **Fresh data every 30 min:** create a Vercel token (Account Settings → Tokens) and save it as the GitHub secret `VERCEL_TOKEN`, or, if the project is linked to Git, save a Deploy Hook URL as `VERCEL_DEPLOY_HOOK`. The *Monitor markets* workflow then triggers a production rebuild after each run.
 - **Keep full history across builds (optional):** add a Vercel env var `GITHUB_DATA_TOKEN`, a fine-grained GitHub token with read-only *Contents* access to this repo. The build then restores the database the workflow saves on the `data` branch.
